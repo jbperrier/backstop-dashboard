@@ -1,12 +1,12 @@
 {
-  "snapshot_taken_utc": "2026-09-23T17:05:00Z",
+  "snapshot_taken_utc": "2026-09-23T19:15:00Z",
   "window": "last 24 hours",
   "project": "SolidCore AI (vgoxeywxywqsviwrkchb)",
   "functions": [
-    {"name": "reply-webhook", "role": "webhook", "calls": 122, "errors": 0, "last_seen_utc": "2026-09-23T16:43:10"},
-    {"name": "granola-webhook", "role": "webhook", "calls": 12, "errors": 0, "last_seen_utc": "2026-09-22T22:26:04"},
-    {"name": "hubspot-companies-reconcile", "role": "scheduled reconcile", "calls": 1, "errors": 0, "last_seen_utc": "2026-09-23T08:30:02"},
-    {"name": "hubspot-reconcile", "role": "scheduled reconcile", "calls": 1, "errors": 0, "last_seen_utc": "2026-09-23T08:15:03"},
+    {"name": "reply-webhook", "role": "webhook", "calls": 130, "errors": 11, "last_seen_utc": "2026-09-23T18:45:16", "note": "401s are a real, diagnosed bug (silently drops real events on a transient DB read) -- not yet fixed, needs a code change"},
+    {"name": "granola-webhook", "role": "webhook", "calls": 10, "errors": 0, "last_seen_utc": "2026-09-22T22:26:04"},
+    {"name": "hubspot-companies-reconcile", "role": "scheduled reconcile", "calls": 1, "errors": 1, "last_seen_utc": "2026-09-23T08:30:02", "note": "500 -- stale HubSpot token in Supabase's app_secrets table, needs a Supabase service-role key to fix, not yet resolved"},
+    {"name": "hubspot-reconcile", "role": "scheduled reconcile", "calls": 1, "errors": 1, "last_seen_utc": "2026-09-23T08:15:03", "note": "same stale-token issue as hubspot-companies-reconcile"},
     {"name": "reply-reconcile", "role": "scheduled reconcile", "calls": 1, "errors": 0, "last_seen_utc": "2026-09-23T08:00:06"},
     {"name": "hubspot-webhook", "role": "webhook", "calls": 0, "errors": 0, "last_seen_utc": null},
     {"name": "apollo-webhook", "role": "webhook", "calls": 0, "errors": 0, "last_seen_utc": null},
@@ -22,5 +22,11 @@
     {"name": "leads-dashboard", "role": "internal dashboard API", "calls": 0, "errors": 0, "last_seen_utc": null},
     {"name": "leads-data", "role": "internal dashboard API", "calls": 0, "errors": 0, "last_seen_utc": null},
     {"name": "dashboard-email", "role": "internal dashboard API", "calls": 0, "errors": 0, "last_seen_utc": null}
+  ],
+  "known_gaps": [
+    "reply-webhook silently drops ~8% of real events on a transient DB read (diagnosed, not yet fixed -- code change needed)",
+    "hubspot-reconcile and hubspot-companies-reconcile are on a stale HubSpot token in Supabase's app_secrets table (Modal side already fixed; this one needs a Supabase service-role key not yet available)",
+    "sync_referred_by.py (inside granola-jobs) blocked on Anthropic API credit exhaustion -- correctly alerting, needs a billing top-up",
+    "reply-suppression-jobs (Modal) not yet confirmed working end-to-end since today's HubSpot token fix -- pending a clean test run"
   ]
 }

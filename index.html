@@ -40,7 +40,7 @@
   <h2>Webhooks &amp; sync functions (Supabase Edge Functions) — 24h snapshot</h2>
   <div class="detail" id="supabase-snapshot-time"></div>
   <table id="supabase-table">
-    <thead><tr><th>Function</th><th>Role</th><th>Calls (24h)</th><th>Errors (24h)</th><th>Last seen</th></tr></thead>
+    <thead><tr><th>Function</th><th>Role</th><th>Calls (24h)</th><th>Errors (24h)</th><th>Last seen</th><th>Note</th></tr></thead>
     <tbody></tbody>
   </table>
   <div class="detail" style="margin-top:10px">
@@ -48,13 +48,17 @@
     <a href="https://supabase.com/dashboard/project/vgoxeywxywqsviwrkchb/functions" target="_blank" rel="noopener">Supabase Edge Functions dashboard</a>.
   </div>
 
+  <h2>Known gaps — honest, not yet fixed</h2>
+  <ul id="known-gaps" class="detail" style="padding-left:18px; line-height:1.6"></ul>
+
   <h2>What this covers</h2>
   <table>
     <thead><tr><th>Name</th><th>Host</th><th>Schedule</th><th>What it does</th></tr></thead>
     <tbody>
       <tr><td>sync_task_completions</td><td>Modal (backstop-task-completion-sync)</td><td>every 2h</td><td>Completes a Reply.io task when the matching HubSpot task is marked done. Exact task-type match only, no fallback.</td></tr>
-      <tr><td>run_granola_jobs</td><td>Modal (backstop-remaining-crons)</td><td>daily 6:20am CT</td><td>Syncs Granola meeting notes to HubSpot, then extracts "referred by" from meeting text via Claude.</td></tr>
+      <tr><td>run_granola_jobs</td><td>Modal (backstop-remaining-crons)</td><td>daily 6:20am CT</td><td>Syncs Granola meeting notes to HubSpot, extracts "referred by" via Claude, and syncs the SC/EP meeting-submission Google Sheet to HubSpot meetings/deals (migrated off Claude co-work 2026-09-23).</td></tr>
       <tr><td>run_reply_suppression_jobs</td><td>Modal (backstop-remaining-crons)</td><td>daily 8:00am CT</td><td>Suppresses opted-out/bounced contacts in Reply.io, then syncs Reply sequence/inbox activity to HubSpot properties + timeline.</td></tr>
+      <tr><td>run_apollo_email_status_sync</td><td>Modal (backstop)</td><td>daily 6:12am CT</td><td>Syncs Apollo email-verification status into a HubSpot contact property. Migrated off a local launchd job (2026-09-23) that had twice silently unloaded.</td></tr>
       <tr><td>reply-webhook</td><td>Supabase Edge Function</td><td>on Reply.io event</td><td>Ingests real-time Reply.io activity events.</td></tr>
       <tr><td>granola-webhook</td><td>Supabase Edge Function</td><td>on Granola event</td><td>Ingests new Granola meeting notes as they're created.</td></tr>
       <tr><td>hubspot-webhook / apollo-webhook</td><td>Supabase Edge Function</td><td>on HubSpot/Apollo event</td><td>Ingests real-time CRM/enrichment events.</td></tr>
@@ -133,15 +137,26 @@ async function loadSupabaseSnapshot() {
   tbody.innerHTML = "";
   for (const fn of data.functions) {
     const tr = document.createElement("tr");
-    const activity = fn.calls > 0 ? (fn.errors > 0 ? "error" : "ok") : "idle";
     tr.innerHTML = `
       <td>${fn.name}</td>
       <td class="detail">${fn.role}</td>
       <td>${fn.calls}</td>
       <td>${fn.errors > 0 ? `<span class="badge error">${fn.errors}</span>` : "0"}</td>
       <td class="detail">${fn.last_seen_utc ? fn.last_seen_utc + " UTC" : "no activity in window"}</td>
+      <td class="detail">${fn.note || "—"}</td>
     `;
     tbody.appendChild(tr);
+  }
+
+  const gapsEl = document.getElementById("known-gaps");
+  gapsEl.innerHTML = "";
+  for (const gap of (data.known_gaps || [])) {
+    const li = document.createElement("li");
+    li.textContent = gap;
+    gapsEl.appendChild(li);
+  }
+  if (!data.known_gaps || data.known_gaps.length === 0) {
+    gapsEl.innerHTML = "<li>None currently tracked.</li>";
   }
 }
 
