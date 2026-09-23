@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Backstop Dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 960px; margin: 0 auto; padding: 24px 16px 60px; background: #0b0d10; color: #e6e6e6; }
+  h1 { font-size: 1.4rem; margin-bottom: 4px; }
+  .sub { color: #9aa0a6; font-size: 0.85rem; margin-bottom: 28px; }
+  h2 { font-size: 1.05rem; margin-top: 36px; border-bottom: 1px solid #2a2e33; padding-bottom: 6px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 0.9rem; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #1e2126; vertical-align: top; }
+  th { color: #9aa0a6; font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 0.78rem; font-weight: 600; }
+  .ok { background: #113a24; color: #4ade80; }
+  .error { background: #3a1414; color: #f87171; }
+  .overdue { background: #3a1414; color: #f87171; }
+  .idle { background: #2a2e33; color: #9aa0a6; }
+  .detail { color: #9aa0a6; font-size: 0.85rem; }
+  .err-note { color: #f87171; font-size: 0.8rem; margin-top: 16px; }
+  a { color: #7dd3fc; }
+  .footer { color: #6b7075; font-size: 0.78rem; margin-top: 40px; }
+  code { background: #1a1d21; padding: 1px 5px; border-radius: 4px; font-size: 0.85em; }
+</style>
+</head>
+<body>
+  <h1>Backstop Dashboard</h1>
+  <div class="sub">Live status for SolidCore's automated HubSpot / Reply.io / Granola / Apollo syncs.</div>
+
+  <h2>Scheduled jobs (Modal) — live</h2>
+  <div id="modal-status" class="detail">Loading…</div>
+  <table id="modal-table" style="display:none">
+    <thead><tr><th>Job</th><th>Status</th><th>Last ran</th><th>Detail</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <div class="err-note" id="modal-error" style="display:none"></div>
+
+  <h2>Webhooks &amp; sync functions (Supabase Edge Functions) — 24h snapshot</h2>
+  <div class="detail" id="supabase-snapshot-time"></div>
+  <table id="supabase-table">
+    <thead><tr><th>Function</th><th>Role</th><th>Calls (24h)</th><th>Errors (24h)</th><th>Last seen</th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <div class="detail" style="margin-top:10px">
+    This section is a point-in-time snapshot, not live. For current numbers, open the
+    <a href="https://supabase.com/dashboard/project/vgoxeywxywqsviwrkchb/functions" target="_blank" rel="noopener">Supabase Edge Functions dashboard</a>.
+  </div>
+
+  <h2>What this covers</h2>
+  <table>
+    <thead><tr><th>Name</th><th>Host</th><th>Schedule</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td>sync_task_completions</td><td>Modal (backstop-task-completion-sync)</td><td>every 2h</td><td>Completes a Reply.io task when the matching HubSpot task is marked done. Exact task-type match only, no fallback.</td></tr>
+      <tr><td>run_granola_jobs</td><td>Modal (backstop-remaining-crons)</td><td>daily 6:20am CT</td><td>Syncs Granola meeting notes to HubSpot, then extracts "referred by" from meeting text via Claude.</td></tr>
+      <tr><td>run_reply_suppression_jobs</td><td>Modal (backstop-remaining-crons)</td><td>daily 8:00am CT</td><td>Suppresses opted-out/bounced contacts in Reply.io, then syncs Reply sequence/inbox activity to HubSpot properties + timeline.</td></tr>
+      <tr><td>reply-webhook</td><td>Supabase Edge Function</td><td>on Reply.io event</td><td>Ingests real-time Reply.io activity events.</td></tr>
+      <tr><td>granola-webhook</td><td>Supabase Edge Function</td><td>on Granola event</td><td>Ingests new Granola meeting notes as they're created.</td></tr>
+      <tr><td>hubspot-webhook / apollo-webhook</td><td>Supabase Edge Function</td><td>on HubSpot/Apollo event</td><td>Ingests real-time CRM/enrichment events.</td></tr>
+      <tr><td>hubspot-*-reconcile, hubspot-*-writeback</td><td>Supabase Edge Function</td><td>scheduled / on event</td><td>Reconciles and writes derived fields back to HubSpot (ICP score, company data, priority, etc.).</td></tr>
+      <tr><td>finds-*, leads-*, pitchghost-pull, dashboard-email</td><td>Supabase Edge Function</td><td>pipeline-triggered</td><td>Lead-finding pipeline (PitchGhost ingestion, scoring, email replies, internal dashboard API).</td></tr>
+      <tr><td>solidcore-icp-scoring</td><td>Modal (on-demand)</td><td>none — called by pipeline</td><td>Scores a lead against SolidCore's ICP. No schedule, no silent-failure risk of its own; monitor via the caller.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="footer">
+    Source: <a href="https://github.com/jbperrier/backstop-dashboard" target="_blank" rel="noopener">github.com/jbperrier/backstop-dashboard</a>.
+    Modal status is fetched live from a public read-only endpoint on page load and every 60s. It carries no secrets — job names and pass/fail summaries only.
+  </div>
+
+<script>
+const PULSE_URL = "https://jonbperrier--backstop-pulse-web.modal.run/status";
+
+function fmtAge(min) {
+  if (min < 60) return Math.round(min) + "m ago";
+  if (min < 1440) return (min / 60).toFixed(1) + "h ago";
+  return (min / 1440).toFixed(1) + "d ago";
+}
+
+function badgeClass(status) {
+  if (status === "ok") return "ok";
+  if (status === "OVERDUE") return "overdue";
+  return "error";
+}
+
+async function loadModalStatus() {
+  const statusEl = document.getElementById("modal-status");
+  const tableEl = document.getElementById("modal-table");
+  const errEl = document.getElementById("modal-error");
+  try {
+    const res = await fetch(PULSE_URL, { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    const jobs = Object.entries(data);
+    if (jobs.length === 0) {
+      statusEl.textContent = "No jobs have reported in yet.";
+      return;
+    }
+    const tbody = tableEl.querySelector("tbody");
+    tbody.innerHTML = "";
+    let anyBad = false;
+    for (const [name, rec] of jobs) {
+      if (rec.status !== "ok") anyBad = true;
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${name}</td>
+        <td><span class="badge ${badgeClass(rec.status)}">${rec.status}</span></td>
+        <td>${fmtAge(rec.age_minutes)}</td>
+        <td class="detail">${rec.detail ? rec.detail : "—"}</td>
+      `;
+      tbody.appendChild(tr);
+    }
+    statusEl.style.display = "none";
+    tableEl.style.display = "";
+    if (anyBad) {
+      errEl.style.display = "";
+      errEl.textContent = "One or more jobs are erroring or overdue — check the row above.";
+    } else {
+      errEl.style.display = "none";
+    }
+  } catch (e) {
+    statusEl.textContent = "Could not reach the live status endpoint (" + e.message + "). It may be cold-starting — try reloading in a few seconds.";
+  }
+}
+
+async function loadSupabaseSnapshot() {
+  const res = await fetch("supabase_snapshot.json", { cache: "no-store" });
+  const data = await res.json();
+  document.getElementById("supabase-snapshot-time").textContent =
+    "Snapshot taken " + data.snapshot_taken_utc + " UTC, covering the " + data.window + ".";
+  const tbody = document.querySelector("#supabase-table tbody");
+  tbody.innerHTML = "";
+  for (const fn of data.functions) {
+    const tr = document.createElement("tr");
+    const activity = fn.calls > 0 ? (fn.errors > 0 ? "error" : "ok") : "idle";
+    tr.innerHTML = `
+      <td>${fn.name}</td>
+      <td class="detail">${fn.role}</td>
+      <td>${fn.calls}</td>
+      <td>${fn.errors > 0 ? `<span class="badge error">${fn.errors}</span>` : "0"}</td>
+      <td class="detail">${fn.last_seen_utc ? fn.last_seen_utc + " UTC" : "no activity in window"}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+
+loadModalStatus();
+loadSupabaseSnapshot();
+setInterval(loadModalStatus, 60000);
+</script>
+</body>
+</html>
