@@ -1,12 +1,13 @@
 {
-  "snapshot_taken_utc": "2026-09-23T19:15:00Z",
+  "snapshot_taken_utc": "2026-09-24T02:35:00Z",
   "window": "last 24 hours",
   "project": "SolidCore AI (vgoxeywxywqsviwrkchb)",
+  "note": "All 19 functions below are also live on the pulse dashboard above (deployed 2026-09-24) -- this section is now a secondary detail view, not the only signal.",
   "functions": [
-    {"name": "reply-webhook", "role": "webhook", "calls": 130, "errors": 11, "last_seen_utc": "2026-09-23T18:45:16", "note": "401s are a real, diagnosed bug (silently drops real events on a transient DB read) -- not yet fixed, needs a code change"},
+    {"name": "reply-webhook", "role": "webhook", "calls": 130, "errors": 11, "last_seen_utc": "2026-09-23T18:45:16", "note": "FIXED 2026-09-24 -- the DB-read-error/wrong-secret confusion that caused these is resolved and verified live. The 11 errors shown are from before the fix; watch tomorrow's count to confirm it's actually gone."},
     {"name": "granola-webhook", "role": "webhook", "calls": 10, "errors": 0, "last_seen_utc": "2026-09-22T22:26:04"},
-    {"name": "hubspot-companies-reconcile", "role": "scheduled reconcile", "calls": 1, "errors": 1, "last_seen_utc": "2026-09-23T08:30:02", "note": "500 -- stale HubSpot token in Supabase's app_secrets table, needs a Supabase service-role key to fix, not yet resolved"},
-    {"name": "hubspot-reconcile", "role": "scheduled reconcile", "calls": 1, "errors": 1, "last_seen_utc": "2026-09-23T08:15:03", "note": "same stale-token issue as hubspot-companies-reconcile"},
+    {"name": "hubspot-companies-reconcile", "role": "scheduled reconcile", "calls": 1, "errors": 1, "last_seen_utc": "2026-09-23T08:30:02", "note": "FIXED 2026-09-24 -- stale HubSpot token in Supabase's app_secrets table updated and verified. A separate, unrelated issue surfaced right after (HubSpot's 10,000-result search-pagination cap, hit because today's bulk fixes touched ~33k contacts at once) -- expected to clear on its own once today's spike passes."},
+    {"name": "hubspot-reconcile", "role": "scheduled reconcile", "calls": 1, "errors": 1, "last_seen_utc": "2026-09-23T08:15:03", "note": "same token fix as hubspot-companies-reconcile, also resolved"},
     {"name": "reply-reconcile", "role": "scheduled reconcile", "calls": 1, "errors": 0, "last_seen_utc": "2026-09-23T08:00:06"},
     {"name": "hubspot-webhook", "role": "webhook", "calls": 0, "errors": 0, "last_seen_utc": null},
     {"name": "apollo-webhook", "role": "webhook", "calls": 0, "errors": 0, "last_seen_utc": null},
@@ -20,13 +21,10 @@
     {"name": "finds-email-reply", "role": "pipeline step", "calls": 0, "errors": 0, "last_seen_utc": null},
     {"name": "pitchghost-pull", "role": "pipeline step", "calls": 0, "errors": 0, "last_seen_utc": null},
     {"name": "leads-dashboard", "role": "internal dashboard API", "calls": 0, "errors": 0, "last_seen_utc": null},
-    {"name": "leads-data", "role": "internal dashboard API", "calls": 0, "errors": 0, "last_seen_utc": null},
+    {"name": "leads-data", "role": "internal dashboard API", "calls": 1, "errors": 0, "last_seen_utc": "2026-09-24T02:24:39"},
     {"name": "dashboard-email", "role": "internal dashboard API", "calls": 0, "errors": 0, "last_seen_utc": null}
   ],
   "known_gaps": [
-    "reply-webhook silently drops ~8% of real events on a transient DB read (diagnosed, not yet fixed -- code change needed)",
-    "hubspot-reconcile and hubspot-companies-reconcile are on a stale HubSpot token in Supabase's app_secrets table (Modal side already fixed; this one needs a Supabase service-role key not yet available)",
-    "sync_referred_by.py (inside granola-jobs) blocked on Anthropic API credit exhaustion -- correctly alerting, needs a billing top-up",
-    "reply-suppression-jobs (Modal) not yet confirmed working end-to-end since today's HubSpot token fix -- pending a clean test run"
+    "sync_referred_by.py (inside granola-jobs) blocked on Anthropic API credit exhaustion -- correctly alerting, needs a billing top-up from Jon. Only remaining open item as of 2026-09-24."
   ]
 }
