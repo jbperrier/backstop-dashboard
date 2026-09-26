@@ -37,15 +37,16 @@
   </table>
   <div class="err-note" id="modal-error" style="display:none"></div>
 
-  <h2>Webhooks &amp; sync functions (Supabase Edge Functions) — 24h snapshot</h2>
-  <div class="detail" id="supabase-snapshot-time"></div>
+  <h2>Webhooks &amp; sync functions (Supabase Edge Functions) — live, last 24h</h2>
+  <div class="detail" id="supabase-snapshot-time">Loading…</div>
   <table id="supabase-table">
-    <thead><tr><th>Function</th><th>Role</th><th>Calls (24h)</th><th>Errors (24h)</th><th>Last seen</th><th>Note</th></tr></thead>
+    <thead><tr><th>Function : mode</th><th>Calls (24h)</th><th>Errors (24h)</th><th>Last seen</th></tr></thead>
     <tbody></tbody>
   </table>
+  <div class="err-note" id="supabase-error" style="display:none"></div>
   <div class="detail" style="margin-top:10px">
-    This section is a point-in-time snapshot, not live. For current numbers, open the
-    <a href="https://supabase.com/dashboard/project/vgoxeywxywqsviwrkchb/functions" target="_blank" rel="noopener">Supabase Edge Functions dashboard</a>.
+    Live from <code>sync_runs</code> via the <code>backstop-status</code> Edge Function — every real sync writes a
+    row here on each run, so this refreshes with real activity, not a manual snapshot.
   </div>
 
   <h2>Known gaps — honest, not yet fixed</h2>
@@ -128,34 +129,50 @@ async function loadModalStatus() {
   }
 }
 
+const STATUS_URL = "https://vgoxeywxywqsviwrkchb.supabase.co/functions/v1/backstop-status";
+const KNOWN_GAPS = [
+  "sync_referred_by.py (inside granola-jobs) blocked on Anthropic API credit exhaustion -- correctly alerting, needs a billing top-up from Jon.",
+];
+
 async function loadSupabaseSnapshot() {
-  const res = await fetch("supabase_snapshot.json", { cache: "no-store" });
-  const data = await res.json();
-  document.getElementById("supabase-snapshot-time").textContent =
-    "Snapshot taken " + data.snapshot_taken_utc + " UTC, covering the " + data.window + ".";
-  const tbody = document.querySelector("#supabase-table tbody");
-  tbody.innerHTML = "";
-  for (const fn of data.functions) {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>${fn.name}</td>
-      <td class="detail">${fn.role}</td>
-      <td>${fn.calls}</td>
-      <td>${fn.errors > 0 ? `<span class="badge error">${fn.errors}</span>` : "0"}</td>
-      <td class="detail">${fn.last_seen_utc ? fn.last_seen_utc + " UTC" : "no activity in window"}</td>
-      <td class="detail">${fn.note || "—"}</td>
-    `;
-    tbody.appendChild(tr);
+  const timeEl = document.getElementById("supabase-snapshot-time");
+  const errEl = document.getElementById("supabase-error");
+  try {
+    const res = await fetch(STATUS_URL, { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    timeEl.textContent =
+      "Live as of " + data.generated_utc + " UTC, covering the " + data.window +
+      ". Only functions that actually ran in that window are listed.";
+    const tbody = document.querySelector("#supabase-table tbody");
+    tbody.innerHTML = "";
+    let anyErrors = false;
+    const rows = Object.entries(data.groups || {}).sort((a, b) => a[0].localeCompare(b[0]));
+    for (const [key, g] of rows) {
+      if (g.errors > 0) anyErrors = true;
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${key}</td>
+        <td>${g.calls}</td>
+        <td>${g.errors > 0 ? `<span class="badge error">${g.errors}</span>` : "0"}</td>
+        <td class="detail">${g.last_seen_utc ? g.last_seen_utc + " UTC" : "—"}</td>
+      `;
+      tbody.appendChild(tr);
+    }
+    errEl.style.display = anyErrors ? "" : "none";
+    if (anyErrors) errEl.textContent = "One or more functions logged an error in the last 24h — check the row above.";
+  } catch (e) {
+    timeEl.textContent = "Could not reach the live status endpoint (" + e.message + ").";
   }
 
   const gapsEl = document.getElementById("known-gaps");
   gapsEl.innerHTML = "";
-  for (const gap of (data.known_gaps || [])) {
+  for (const gap of KNOWN_GAPS) {
     const li = document.createElement("li");
     li.textContent = gap;
     gapsEl.appendChild(li);
   }
-  if (!data.known_gaps || data.known_gaps.length === 0) {
+  if (KNOWN_GAPS.length === 0) {
     gapsEl.innerHTML = "<li>None currently tracked.</li>";
   }
 }
@@ -163,6 +180,7 @@ async function loadSupabaseSnapshot() {
 loadModalStatus();
 loadSupabaseSnapshot();
 setInterval(loadModalStatus, 60000);
+setInterval(loadSupabaseSnapshot, 60000);
 </script>
 </body>
 </html>
