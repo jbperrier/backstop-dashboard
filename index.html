@@ -29,15 +29,7 @@
   <h1>Backstop Dashboard</h1>
   <div class="sub">Live status for SolidCore's automated HubSpot / Reply.io / Granola / Apollo syncs.</div>
 
-  <h2>Scheduled jobs (Modal) — live</h2>
-  <div id="modal-status" class="detail">Loading…</div>
-  <table id="modal-table" style="display:none">
-    <thead><tr><th>Job</th><th>Status</th><th>Last ran</th><th>Detail</th></tr></thead>
-    <tbody></tbody>
-  </table>
-  <div class="err-note" id="modal-error" style="display:none"></div>
-
-  <h2>Webhooks &amp; sync functions (Supabase Edge Functions) — live, last 24h</h2>
+  <h2>Webhooks &amp; scheduled jobs — live, last 24h</h2>
   <div class="detail" id="supabase-snapshot-time">Loading…</div>
   <table id="supabase-table">
     <thead><tr><th>Function : mode</th><th>Calls (24h)</th><th>Errors (24h)</th><th>Last seen</th></tr></thead>
@@ -56,79 +48,28 @@
   <table>
     <thead><tr><th>Name</th><th>Host</th><th>Schedule</th><th>What it does</th></tr></thead>
     <tbody>
-      <tr><td>sync_task_completions</td><td>Modal (backstop-task-completion-sync)</td><td>every 2h</td><td>Completes a Reply.io task when the matching HubSpot task is marked done. Exact task-type match only, no fallback.</td></tr>
-      <tr><td>run_granola_jobs</td><td>Modal (backstop-remaining-crons)</td><td>daily 6:20am CT</td><td>Syncs Granola meeting notes to HubSpot, extracts "referred by" via Claude, and syncs the SC/EP meeting-submission Google Sheet to HubSpot meetings/deals (migrated off Claude co-work 2026-09-23).</td></tr>
-      <tr><td>run_reply_suppression_jobs</td><td>Modal (backstop-remaining-crons)</td><td>daily 8:00am CT</td><td>Suppresses opted-out/bounced contacts in Reply.io, then syncs Reply sequence/inbox activity to HubSpot properties + timeline.</td></tr>
-      <tr><td>run_apollo_email_status_sync</td><td>Modal (backstop)</td><td>daily 6:12am CT</td><td>Syncs Apollo email-verification status into a HubSpot contact property. Migrated off a local launchd job (2026-09-23) that had twice silently unloaded.</td></tr>
+      <tr><td>task_completion_backstop</td><td>GitHub Actions (solidcore-automations)</td><td>daily 9:40am CT</td><td>Backstop poll for HubSpot -> Reply task completion, in case the real-time webhook (below) misses an event. Exact task-type match only, no fallback.</td></tr>
+      <tr><td>granola_meetings, sc_ep_meeting_sync</td><td>GitHub Actions (solidcore-automations)</td><td>daily 6:20am CT</td><td>Syncs Granola meeting notes to HubSpot, and syncs the SC/EP meeting-submission Google Sheet to HubSpot meetings/deals. ("referred by" extraction disabled 2026-09-27, blocked on Anthropic credits — see known gaps.)</td></tr>
+      <tr><td>suppress_reply_contacts, reply_activity_sync</td><td>GitHub Actions (solidcore-automations)</td><td>daily 8:00am CT</td><td>Suppresses opted-out/bounced contacts in Reply.io, then syncs Reply sequence/inbox activity to HubSpot properties + timeline.</td></tr>
+      <tr><td>apollo_email_status_sync</td><td>GitHub Actions (solidcore-automations)</td><td>daily 6:12am CT</td><td>Syncs Apollo email-verification status into a HubSpot contact property.</td></tr>
+      <tr><td>hubspot_sentinel</td><td>GitHub Actions (solidcore-automations)</td><td>daily 7:00am CT</td><td>Alerts if <code>apollo_email_status</code> goes stale.</td></tr>
+      <tr><td>hubspot-task-completion-webhook</td><td>Supabase Edge Function</td><td>on HubSpot task-completion event</td><td>Real-time HubSpot -> Reply task completion. Reads a Reply open-task cache refreshed every 2h by reply-task-cache-reconcile.</td></tr>
       <tr><td>reply-webhook</td><td>Supabase Edge Function</td><td>on Reply.io event</td><td>Ingests real-time Reply.io activity events.</td></tr>
       <tr><td>granola-webhook</td><td>Supabase Edge Function</td><td>on Granola event</td><td>Ingests new Granola meeting notes as they're created.</td></tr>
       <tr><td>hubspot-webhook / apollo-webhook</td><td>Supabase Edge Function</td><td>on HubSpot/Apollo event</td><td>Ingests real-time CRM/enrichment events.</td></tr>
       <tr><td>hubspot-*-reconcile, hubspot-*-writeback</td><td>Supabase Edge Function</td><td>scheduled / on event</td><td>Reconciles and writes derived fields back to HubSpot (ICP score, company data, priority, etc.).</td></tr>
       <tr><td>finds-*, leads-*, pitchghost-pull, dashboard-email</td><td>Supabase Edge Function</td><td>pipeline-triggered</td><td>Lead-finding pipeline (PitchGhost ingestion, scoring, email replies, internal dashboard API).</td></tr>
-      <tr><td>solidcore-icp-scoring</td><td>Modal (on-demand)</td><td>none — called by pipeline</td><td>Scores a lead against SolidCore's ICP. No schedule, no silent-failure risk of its own; monitor via the caller.</td></tr>
+      <tr><td>solidcore-icp-scoring</td><td>Modal — <strong>down</strong> (compute exhausted, 2026-09-27)</td><td>none — called by pipeline</td><td>Scores a lead against SolidCore's ICP. Not migrated yet; call <code>pipeline.score_lead()</code> in-process until it has a new host.</td></tr>
     </tbody>
   </table>
 
   <div class="footer">
     Source: <a href="https://github.com/jbperrier/backstop-dashboard" target="_blank" rel="noopener">github.com/jbperrier/backstop-dashboard</a>.
-    Modal status is fetched live from a public read-only endpoint on page load and every 60s. It carries no secrets — job names and pass/fail summaries only.
+    Status is fetched live from a public read-only Supabase Edge Function on page load and every 60s. It carries no secrets — job names and pass/fail summaries only.
+    GitHub Actions jobs report in via a separate reporter Edge Function (<code>backstop-report</code>) at the end of each run.
   </div>
 
 <script>
-const PULSE_URL = "https://jonbperrier--backstop-pulse-web.modal.run/status";
-
-function fmtAge(min) {
-  if (min < 60) return Math.round(min) + "m ago";
-  if (min < 1440) return (min / 60).toFixed(1) + "h ago";
-  return (min / 1440).toFixed(1) + "d ago";
-}
-
-function badgeClass(status) {
-  if (status === "ok") return "ok";
-  if (status === "OVERDUE") return "overdue";
-  return "error";
-}
-
-async function loadModalStatus() {
-  const statusEl = document.getElementById("modal-status");
-  const tableEl = document.getElementById("modal-table");
-  const errEl = document.getElementById("modal-error");
-  try {
-    const res = await fetch(PULSE_URL, { cache: "no-store" });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const data = await res.json();
-    const jobs = Object.entries(data);
-    if (jobs.length === 0) {
-      statusEl.textContent = "No jobs have reported in yet.";
-      return;
-    }
-    const tbody = tableEl.querySelector("tbody");
-    tbody.innerHTML = "";
-    let anyBad = false;
-    for (const [name, rec] of jobs) {
-      if (rec.status !== "ok") anyBad = true;
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td>${name}</td>
-        <td><span class="badge ${badgeClass(rec.status)}">${rec.status}</span></td>
-        <td>${fmtAge(rec.age_minutes)}</td>
-        <td class="detail">${rec.detail ? rec.detail : "—"}</td>
-      `;
-      tbody.appendChild(tr);
-    }
-    statusEl.style.display = "none";
-    tableEl.style.display = "";
-    if (anyBad) {
-      errEl.style.display = "";
-      errEl.textContent = "One or more jobs are erroring or overdue — check the row above.";
-    } else {
-      errEl.style.display = "none";
-    }
-  } catch (e) {
-    statusEl.textContent = "Could not reach the live status endpoint (" + e.message + "). It may be cold-starting — try reloading in a few seconds.";
-  }
-}
-
 const STATUS_URL = "https://vgoxeywxywqsviwrkchb.supabase.co/functions/v1/backstop-status";
 const KNOWN_GAPS = [
   "sync_referred_by.py (inside granola-jobs) blocked on Anthropic API credit exhaustion -- correctly alerting, needs a billing top-up from Jon.",
@@ -177,9 +118,7 @@ async function loadSupabaseSnapshot() {
   }
 }
 
-loadModalStatus();
 loadSupabaseSnapshot();
-setInterval(loadModalStatus, 60000);
 setInterval(loadSupabaseSnapshot, 60000);
 </script>
 </body>
