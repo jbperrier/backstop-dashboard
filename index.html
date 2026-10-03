@@ -23,6 +23,14 @@
   a { color: #7dd3fc; }
   .footer { color: #6b7075; font-size: 0.78rem; margin-top: 40px; }
   code { background: #1a1d21; padding: 1px 5px; border-radius: 4px; font-size: 0.85em; }
+  .rq-item { border: 1px solid #2a2e33; border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
+  .rq-title { font-weight: 600; }
+  .rq-meta { color: #9aa0a6; font-size: 0.78rem; margin-top: 2px; }
+  .rq-actions { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .rq-actions button, #rq-unlock button { background: #1a1d21; color: #e6e6e6; border: 1px solid #2a2e33; border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 0.8rem; }
+  .rq-actions button:hover, #rq-unlock button:hover { border-color: #7dd3fc; }
+  #rq-unlock input { background: #0b0d10; color: #e6e6e6; border: 1px solid #2a2e33; border-radius: 6px; padding: 5px 8px; width: min(380px, 70%); }
+  .kind { background: #1a2a3a; color: #7dd3fc; }
 </style>
 </head>
 <body>
@@ -40,6 +48,14 @@
     Live from <code>sync_runs</code> via the <code>backstop-status</code> Edge Function — every real sync writes a
     row here on each run, so this refreshes with real activity, not a manual snapshot.
   </div>
+
+  <h2>Review queue — from the daily conversation review</h2>
+  <div class="detail" id="rq-status">Private: needs the findings token.</div>
+  <div id="rq-unlock" style="display:none; margin-top:10px">
+    <input id="rq-token" type="password" placeholder="Paste token (Keychain item: backstop.findings_token)" autocomplete="off">
+    <button id="rq-save">Unlock</button>
+  </div>
+  <div id="rq-body"></div>
 
   <h2>Known gaps — honest, not yet fixed</h2>
   <ul id="known-gaps" class="detail" style="padding-left:18px; line-height:1.6"></ul>
@@ -120,6 +136,77 @@ async function loadSupabaseSnapshot() {
 
 loadSupabaseSnapshot();
 setInterval(loadSupabaseSnapshot, 60000);
+
+// ---- Review queue (private, token-gated) ----
+const FINDINGS_URL = "https://vgoxeywxywqsviwrkchb.supabase.co/functions/v1/backstop-findings";
+const TOKEN_KEY = "backstopFindingsToken";
+function rqToken() { try { return localStorage.getItem(TOKEN_KEY) || ""; } catch (e) { return ""; } }
+function rqSetToken(t) { try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY); } catch (e) {} }
+
+function rqEl(tag, cls, text) {
+  const el = document.createElement(tag);
+  if (cls) el.className = cls;
+  if (text !== undefined) el.textContent = text;   // textContent only: findings are never parsed as HTML
+  return el;
+}
+
+async function rqSetStatus(id, status) {
+  const res = await fetch(FINDINGS_URL, { method: "POST", headers: { "x-token": rqToken(), "content-type": "application/json" },
+                                          body: JSON.stringify({ id, status }) });
+  if (res.ok) loadFindings();
+}
+
+function rqItem(f) {
+  const box = rqEl("div", "rq-item");
+  const top = rqEl("div", "rq-title");
+  top.appendChild(rqEl("span", "badge kind", f.kind));
+  top.appendChild(document.createTextNode(" " + f.title));
+  box.appendChild(top);
+  if (f.detail) box.appendChild(rqEl("div", "detail", f.detail));
+  box.appendChild(rqEl("div", "rq-meta", "#" + f.id + " · found " + f.found_on));
+  const acts = rqEl("div", "rq-actions");
+  const add = (label, status) => { const b = rqEl("button", "", label); b.onclick = () => rqSetStatus(f.id, status); acts.appendChild(b); };
+  if (f.status === "new") { add("Accept", "accepted"); add("Done", "done"); add("Dismiss", "dismissed"); }
+  else if (f.status === "accepted") { add("Done", "done"); add("Dismiss", "dismissed"); }
+  else if (f.status === "done") { add("Reopen", "new"); }
+  box.appendChild(acts);
+  return box;
+}
+
+function rqSection(body, title, items) {
+  if (!items.length) return;
+  body.appendChild(rqEl("h3", "", title + " (" + items.length + ")"));
+  items.forEach((f) => body.appendChild(rqItem(f)));
+}
+
+async function loadFindings() {
+  const statusEl = document.getElementById("rq-status");
+  const unlockEl = document.getElementById("rq-unlock");
+  const body = document.getElementById("rq-body");
+  const token = rqToken();
+  if (!token) { unlockEl.style.display = ""; body.textContent = ""; statusEl.textContent = "Private: paste the findings token to see the queue."; return; }
+  try {
+    const res = await fetch(FINDINGS_URL, { headers: { "x-token": token }, cache: "no-store" });
+    if (res.status === 401) { rqSetToken(""); unlockEl.style.display = ""; statusEl.textContent = "Token rejected. Paste it again."; return; }
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    unlockEl.style.display = "none";
+    const all = data.findings || [];
+    const cutoff = Date.now() - 14 * 86400000;
+    body.textContent = "";
+    rqSection(body, "Needs your call", all.filter((f) => f.status === "new"));
+    rqSection(body, "In progress", all.filter((f) => f.status === "accepted"));
+    rqSection(body, "Done in the last 14 days", all.filter((f) => f.status === "done" && Date.parse(f.updated_at) >= cutoff));
+    const dismissed = all.filter((f) => f.status === "dismissed").length;
+    statusEl.textContent = "Updated " + data.generated_utc + " UTC. " + dismissed + " dismissed (hidden).";
+  } catch (e) {
+    statusEl.textContent = "Could not load the review queue (" + e.message + ").";
+  }
+}
+
+document.getElementById("rq-save").onclick = () => { rqSetToken(document.getElementById("rq-token").value.trim()); document.getElementById("rq-token").value = ""; loadFindings(); };
+loadFindings();
+setInterval(loadFindings, 60000);
 </script>
 </body>
 </html>
