@@ -51,6 +51,7 @@
 
   <h2>Review queue — from the daily conversation review</h2>
   <div class="detail" id="rq-status">Private: needs the findings token.</div>
+  <button id="rq-lock" style="display:none; margin-top:6px; background:#1a1d21; color:#e6e6e6; border:1px solid #2a2e33; border-radius:6px; padding:3px 10px; cursor:pointer; font-size:0.8rem">Lock</button>
   <div id="rq-unlock" style="display:none; margin-top:10px">
     <input id="rq-token" type="password" placeholder="Paste token (Keychain item: backstop.findings_token)" autocomplete="off">
     <button id="rq-save">Unlock</button>
@@ -140,8 +141,16 @@ setInterval(loadSupabaseSnapshot, 60000);
 // ---- Review queue (private, token-gated) ----
 const FINDINGS_URL = "https://vgoxeywxywqsviwrkchb.supabase.co/functions/v1/backstop-findings";
 const TOKEN_KEY = "backstopFindingsToken";
-function rqToken() { try { return localStorage.getItem(TOKEN_KEY) || ""; } catch (e) { return ""; } }
-function rqSetToken(t) { try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY); } catch (e) {} }
+let rqMemoryToken = "";      // used when the browser blocks localStorage (private mode, tracking protection)
+let rqStorageBlocked = false;
+let rqBusy = false;
+let rqLastJson = "";
+
+function rqToken() { try { return localStorage.getItem(TOKEN_KEY) || rqMemoryToken; } catch (e) { rqStorageBlocked = true; return rqMemoryToken; } }
+function rqSetToken(t) {
+  rqMemoryToken = t;
+  try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY); } catch (e) { rqStorageBlocked = true; }
+}
 
 function rqEl(tag, cls, text) {
   const el = document.createElement(tag);
@@ -153,7 +162,7 @@ function rqEl(tag, cls, text) {
 async function rqSetStatus(id, status) {
   const res = await fetch(FINDINGS_URL, { method: "POST", headers: { "x-token": rqToken(), "content-type": "application/json" },
                                           body: JSON.stringify({ id, status }) });
-  if (res.ok) loadFindings();
+  if (res.ok) { rqLastJson = ""; loadFindings(); }
 }
 
 function rqItem(f) {
@@ -173,38 +182,71 @@ function rqItem(f) {
   return box;
 }
 
-function rqSection(body, title, items) {
+function rqSection(frag, title, items) {
   if (!items.length) return;
-  body.appendChild(rqEl("h3", "", title + " (" + items.length + ")"));
-  items.forEach((f) => body.appendChild(rqItem(f)));
+  frag.appendChild(rqEl("h3", "", title + " (" + items.length + ")"));
+  items.forEach((f) => frag.appendChild(rqItem(f)));
+}
+
+function rqLock() {
+  rqSetToken(""); rqLastJson = "";
+  document.getElementById("rq-body").replaceChildren();
+  document.getElementById("rq-lock").style.display = "none";
+  document.getElementById("rq-unlock").style.display = "";
+  document.getElementById("rq-status").textContent = "Locked. Paste the findings token to see the queue.";
 }
 
 async function loadFindings() {
+  if (rqBusy) return;          // never run two loads at once: a late one could overwrite a newer one
+  rqBusy = true;
   const statusEl = document.getElementById("rq-status");
   const unlockEl = document.getElementById("rq-unlock");
+  const lockEl = document.getElementById("rq-lock");
   const body = document.getElementById("rq-body");
-  const token = rqToken();
-  if (!token) { unlockEl.style.display = ""; body.textContent = ""; statusEl.textContent = "Private: paste the findings token to see the queue."; return; }
   try {
+    const token = rqToken();
+    if (!token) {
+      unlockEl.style.display = ""; lockEl.style.display = "none"; body.replaceChildren();
+      statusEl.textContent = "Private: paste the findings token to see the queue.";
+      return;
+    }
+    if (!body.children.length) statusEl.textContent = "Loading the review queue…";
     const res = await fetch(FINDINGS_URL, { headers: { "x-token": token }, cache: "no-store" });
-    if (res.status === 401) { rqSetToken(""); unlockEl.style.display = ""; statusEl.textContent = "Token rejected. Paste it again."; return; }
+    if (res.status === 401) {
+      rqSetToken(""); body.replaceChildren(); unlockEl.style.display = ""; lockEl.style.display = "none";
+      statusEl.textContent = "Token rejected. Paste it again (the whole value, no spaces).";
+      return;
+    }
     if (!res.ok) throw new Error("HTTP " + res.status);
     const data = await res.json();
-    unlockEl.style.display = "none";
+    unlockEl.style.display = "none"; lockEl.style.display = "";
     const all = data.findings || [];
-    const cutoff = Date.now() - 14 * 86400000;
-    body.textContent = "";
-    rqSection(body, "Needs your call", all.filter((f) => f.status === "new"));
-    rqSection(body, "In progress", all.filter((f) => f.status === "accepted"));
-    rqSection(body, "Done in the last 14 days", all.filter((f) => f.status === "done" && Date.parse(f.updated_at) >= cutoff));
+    const json = JSON.stringify(all);
+    if (json !== rqLastJson) {                        // redraw only when the data changed; swap in one step, no empty flash
+      const cutoff = Date.now() - 14 * 86400000;
+      const frag = document.createDocumentFragment();
+      rqSection(frag, "Needs your call", all.filter((f) => f.status === "new"));
+      rqSection(frag, "In progress", all.filter((f) => f.status === "accepted"));
+      rqSection(frag, "Done in the last 14 days", all.filter((f) => f.status === "done" && !(Date.parse(f.updated_at) < cutoff)));
+      body.replaceChildren(frag);
+      rqLastJson = json;
+    }
     const dismissed = all.filter((f) => f.status === "dismissed").length;
-    statusEl.textContent = "Updated " + data.generated_utc + " UTC. " + dismissed + " dismissed (hidden).";
+    statusEl.textContent = "Updated " + data.generated_utc + " UTC. " + dismissed + " dismissed (hidden)." +
+      (rqStorageBlocked ? " Your browser blocks saving the token, so it is kept for this tab only." : "");
   } catch (e) {
-    statusEl.textContent = "Could not load the review queue (" + e.message + ").";
+    console.error("review queue load failed", e);
+    statusEl.textContent = "Could not refresh the review queue (" + e.message + "). The last list stays on screen.";
+  } finally {
+    rqBusy = false;
   }
 }
 
-document.getElementById("rq-save").onclick = () => { rqSetToken(document.getElementById("rq-token").value.trim()); document.getElementById("rq-token").value = ""; loadFindings(); };
+document.getElementById("rq-save").onclick = () => {
+  const input = document.getElementById("rq-token");
+  rqSetToken(input.value.trim()); input.value = ""; rqLastJson = ""; loadFindings();
+};
+document.getElementById("rq-lock").onclick = rqLock;
 loadFindings();
 setInterval(loadFindings, 60000);
 </script>
