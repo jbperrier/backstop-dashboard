@@ -59,7 +59,6 @@
       <tr><td>hubspot-webhook / apollo-webhook</td><td>Supabase Edge Function</td><td>on HubSpot/Apollo event</td><td>Ingests real-time CRM/enrichment events.</td></tr>
       <tr><td>hubspot-*-reconcile, hubspot-*-writeback</td><td>Supabase Edge Function</td><td>scheduled / on event</td><td>Reconciles and writes derived fields back to HubSpot (ICP score, company data, priority, etc.).</td></tr>
       <tr><td>finds-*, leads-*, pitchghost-pull, dashboard-email</td><td>Supabase Edge Function</td><td>pipeline-triggered</td><td>Lead-finding pipeline (PitchGhost ingestion, scoring, email replies, internal dashboard API).</td></tr>
-      <tr><td>solidcore-icp-scoring</td><td>Modal — <strong>down</strong> (compute exhausted, 2026-09-27)</td><td>none — called by pipeline</td><td>Scores a lead against SolidCore's ICP. Not migrated yet; call <code>pipeline.score_lead()</code> in-process until it has a new host.</td></tr>
     </tbody>
   </table>
 
